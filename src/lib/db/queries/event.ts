@@ -2713,106 +2713,108 @@ export const EventRepository = {
     sports_source_match_confidence: string | null
   }>> {
     return runQuery(async () => {
-      const row = await db
-        .select({
-          id: events.id,
-          slug: events.slug,
-          livestream_url: events.livestream_url,
-        })
-        .from(events)
-        .where(eq(events.id, eventId))
-        .limit(1)
-
-      const eventRow = row[0]
-      if (!eventRow) {
-        return { data: null, error: 'Event not found.' }
-      }
-
-      const now = new Date()
-      const sportsPayload: Partial<typeof event_sports.$inferInsert> & {
-        sports_ended: boolean
-        sports_score: string | null
-        updated_at: Date
-      } = {
-        sports_ended: sportsEnded,
-        sports_score: sportsScore,
-        updated_at: now,
-      }
-
-      if (sportsEnded) {
-        sportsPayload.sports_live = false
-      }
-
-      if (sportsSource) {
-        const hasSourceIdentity = Boolean(sportsSource.provider && (sportsSource.eventId || sportsSource.gameId))
-        sportsPayload.sports_source_provider = sportsSource.provider
-        sportsPayload.sports_source_event_id = sportsSource.eventId
-        sportsPayload.sports_source_game_id = sportsSource.gameId
-        sportsPayload.sports_source_league_id = sportsSource.leagueId
-        sportsPayload.sports_source_league_label = sportsSource.leagueLabel
-        sportsPayload.sports_source_match_confidence = sportsSource.matchConfidence
-        sportsPayload.sports_source_selected_at = hasSourceIdentity ? now : null
-        if ('payload' in sportsSource) {
-          sportsPayload.sports_source_payload = sportsSource.payload ?? null
-        }
-      }
-
-      if (livestreamUrl !== undefined && livestreamUrl !== null) {
-        await db
-          .update(events)
-          .set({
-            livestream_url: livestreamUrl,
-            updated_at: now,
+      return db.transaction(async (tx) => {
+        const row = await tx
+          .select({
+            id: events.id,
+            slug: events.slug,
+            livestream_url: events.livestream_url,
           })
+          .from(events)
           .where(eq(events.id, eventId))
-      }
+          .limit(1)
 
-      await db
-        .insert(event_sports)
-        .values({
-          event_id: eventId,
-          ...sportsPayload,
-        })
-        .onConflictDoUpdate({
-          target: event_sports.event_id,
-          set: sportsPayload,
-        })
+        const eventRow = row[0]
+        if (!eventRow) {
+          return { data: null, error: 'Event not found.' }
+        }
 
-      const sportsRows = await db
-        .select({
-          sports_score: event_sports.sports_score,
-          sports_live: event_sports.sports_live,
-          sports_ended: event_sports.sports_ended,
-          sports_source_provider: event_sports.sports_source_provider,
-          sports_source_event_id: event_sports.sports_source_event_id,
-          sports_source_game_id: event_sports.sports_source_game_id,
-          sports_source_league_id: event_sports.sports_source_league_id,
-          sports_source_league_label: event_sports.sports_source_league_label,
-          sports_source_match_confidence: event_sports.sports_source_match_confidence,
-        })
-        .from(event_sports)
-        .where(eq(event_sports.event_id, eventId))
-        .limit(1)
+        const now = new Date()
+        const sportsPayload: Partial<typeof event_sports.$inferInsert> & {
+          sports_ended: boolean
+          sports_score: string | null
+          updated_at: Date
+        } = {
+          sports_ended: sportsEnded,
+          sports_score: sportsScore,
+          updated_at: now,
+        }
 
-      const sportsRow = sportsRows[0]
+        if (sportsEnded) {
+          sportsPayload.sports_live = false
+        }
 
-      return {
-        data: {
-          id: eventRow.id,
-          slug: eventRow.slug,
-          livestream_url: livestreamUrl ?? eventRow.livestream_url ?? null,
-          sports_score: sportsRow?.sports_score ?? null,
-          sports_live: sportsRow?.sports_live ?? null,
-          sports_ended: sportsRow?.sports_ended ?? null,
-          sports_source_provider: sportsRow?.sports_source_provider ?? null,
-          sports_source_event_id: sportsRow?.sports_source_event_id ?? null,
-          sports_source_game_id: sportsRow?.sports_source_game_id ?? null,
-          sports_source_league_id: sportsRow?.sports_source_league_id ?? null,
-          sports_source_league_label: sportsRow?.sports_source_league_label ?? null,
-          sports_source_match_confidence: sportsRow?.sports_source_match_confidence ?? null,
-        },
-        error: null,
-      }
+        if (sportsSource) {
+          const hasSourceIdentity = Boolean(sportsSource.provider && (sportsSource.eventId || sportsSource.gameId))
+          sportsPayload.sports_source_provider = sportsSource.provider
+          sportsPayload.sports_source_event_id = sportsSource.eventId
+          sportsPayload.sports_source_game_id = sportsSource.gameId
+          sportsPayload.sports_source_league_id = sportsSource.leagueId
+          sportsPayload.sports_source_league_label = sportsSource.leagueLabel
+          sportsPayload.sports_source_match_confidence = sportsSource.matchConfidence
+          sportsPayload.sports_source_selected_at = hasSourceIdentity ? now : null
+          if ('payload' in sportsSource) {
+            sportsPayload.sports_source_payload = sportsSource.payload ?? null
+          }
+        }
+
+        if (livestreamUrl !== undefined) {
+          await tx
+            .update(events)
+            .set({
+              livestream_url: livestreamUrl,
+              updated_at: now,
+            })
+            .where(eq(events.id, eventId))
+        }
+
+        await tx
+          .insert(event_sports)
+          .values({
+            event_id: eventId,
+            ...sportsPayload,
+          })
+          .onConflictDoUpdate({
+            target: event_sports.event_id,
+            set: sportsPayload,
+          })
+
+        const sportsRows = await tx
+          .select({
+            sports_score: event_sports.sports_score,
+            sports_live: event_sports.sports_live,
+            sports_ended: event_sports.sports_ended,
+            sports_source_provider: event_sports.sports_source_provider,
+            sports_source_event_id: event_sports.sports_source_event_id,
+            sports_source_game_id: event_sports.sports_source_game_id,
+            sports_source_league_id: event_sports.sports_source_league_id,
+            sports_source_league_label: event_sports.sports_source_league_label,
+            sports_source_match_confidence: event_sports.sports_source_match_confidence,
+          })
+          .from(event_sports)
+          .where(eq(event_sports.event_id, eventId))
+          .limit(1)
+
+        const sportsRow = sportsRows[0]
+
+        return {
+          data: {
+            id: eventRow.id,
+            slug: eventRow.slug,
+            livestream_url: livestreamUrl !== undefined ? livestreamUrl : eventRow.livestream_url ?? null,
+            sports_score: sportsRow?.sports_score ?? null,
+            sports_live: sportsRow?.sports_live ?? null,
+            sports_ended: sportsRow?.sports_ended ?? null,
+            sports_source_provider: sportsRow?.sports_source_provider ?? null,
+            sports_source_event_id: sportsRow?.sports_source_event_id ?? null,
+            sports_source_game_id: sportsRow?.sports_source_game_id ?? null,
+            sports_source_league_id: sportsRow?.sports_source_league_id ?? null,
+            sports_source_league_label: sportsRow?.sports_source_league_label ?? null,
+            sports_source_match_confidence: sportsRow?.sports_source_match_confidence ?? null,
+          },
+          error: null,
+        }
+      })
     })
   },
 

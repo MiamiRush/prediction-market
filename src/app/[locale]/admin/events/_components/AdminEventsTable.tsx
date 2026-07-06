@@ -99,13 +99,15 @@ function parseSportsScoreParts(score: string | null | undefined) {
   }
 }
 
-function formatSportsSourceDate(value: string | null | undefined) {
-  if (!value) {
+function formatSportsSourceDate(value: Date | null) {
+  if (!value || Number.isNaN(value.getTime())) {
     return null
   }
 
-  const parsed = new Date(value)
-  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10)
+  const year = String(value.getFullYear()).padStart(4, '0')
+  const month = String(value.getMonth() + 1).padStart(2, '0')
+  const day = String(value.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
 function parseSportsSourceConfidence(value: string | null | undefined) {
@@ -526,7 +528,7 @@ function useAdminEventsTableState(initialAutoDeployNewEventsEnabled: boolean) {
       if (sportsFinalEvent.sports_league_slug) {
         params.set('league', sportsFinalEvent.sports_league_slug)
       }
-      const eventDate = formatSportsSourceDate(sportsFinalEvent.end_date)
+      const eventDate = formatSportsSourceDate(resolveGameDateFromAdminEvent(sportsFinalEvent))
       if (eventDate) {
         params.set('date', eventDate)
       }
@@ -947,7 +949,7 @@ export default function AdminEventsTable({
         sportsSourceProviderValue.trim(),
         sportsSourceEventIdValue.trim() || sportsSourceGameIdValue.trim(),
       ].filter(Boolean).join(' · ')
-    : t('Sports data')
+    : t('Search sports API')
 
   const filtersFormFields = (
     <div className="grid gap-4 py-2">
@@ -1651,7 +1653,7 @@ export default function AdminEventsTable({
                 handleCloseSportsFinalModal()
               }}
             >
-              <DrawerContent className="max-h-[90vh] w-full bg-background px-4 pt-4 pb-6">
+              <DrawerContent className="max-h-[90vh] w-full overflow-y-auto bg-background px-4 pt-4 pb-6">
                 <div className="grid gap-4">
                   <DrawerHeader className="space-y-2 p-0 text-left">
                     <DrawerTitle>{t('Sports final status')}</DrawerTitle>
@@ -1696,7 +1698,7 @@ export default function AdminEventsTable({
                 handleCloseSportsFinalModal()
               }}
             >
-              <DialogContent className="sm:max-w-lg">
+              <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
                 <DialogHeader>
                   <DialogTitle>{t('Sports final status')}</DialogTitle>
                   {sportsFinalEvent && (

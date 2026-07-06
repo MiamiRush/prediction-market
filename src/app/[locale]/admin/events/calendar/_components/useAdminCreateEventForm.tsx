@@ -188,11 +188,17 @@ interface SportsMatchCandidate {
 }
 
 function formatSportsSearchDate(value: string | null | undefined) {
-  if (!value) {
+  const normalized = value?.trim()
+  if (!normalized) {
     return null
   }
 
-  const parsed = new Date(value)
+  const localDateMatch = normalized.match(/^(\d{4}-\d{2}-\d{2})/)
+  if (localDateMatch?.[1]) {
+    return localDateMatch[1]
+  }
+
+  const parsed = new Date(normalized)
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10)
 }
 
@@ -2248,7 +2254,7 @@ export function useAdminCreateEventForm({
         baseSlug: baseEventSlug,
         sports: sportsForm,
       }).payload?.eventDate
-      const eventDate = formatSportsSearchDate(form.endDateIso) ?? derivedEventDate
+      const eventDate = derivedEventDate ?? formatSportsSearchDate(form.endDateIso)
       if (eventDate) {
         params.set('date', eventDate)
       }

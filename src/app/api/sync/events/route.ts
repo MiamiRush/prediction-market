@@ -1053,13 +1053,32 @@ async function processEvent(
     normalizedSportsTeams = normalizedSportsTeams ?? buildSportsSourceTeamRecords(sportsSourceCandidate)
   }
   if (existingEventSports) {
+    const currentSourceIdentityKey = buildSportsSourceIdentityKey({
+      provider: sportsSourceProvider,
+      eventId: sportsSourceEventId,
+      gameId: sportsSourceGameId,
+      leagueId: sportsSourceLeagueId,
+    })
+    const existingSourceIdentityKey = buildSportsSourceIdentityKey({
+      provider: existingEventSports.sports_source_provider ?? null,
+      eventId: existingEventSports.sports_source_event_id ?? null,
+      gameId: existingEventSports.sports_source_game_id ?? null,
+      leagueId: existingEventSports.sports_source_league_id ?? null,
+    })
+    const hasCurrentSourceIdentity = Boolean(
+      sportsSourceProvider || sportsSourceEventId || sportsSourceGameId || sportsSourceLeagueId,
+    )
+    const mayReuseExistingSourcePayload = !hasCurrentSourceIdentity || currentSourceIdentityKey === existingSourceIdentityKey
+
     sportsSourceProvider = sportsSourceProvider ?? existingEventSports.sports_source_provider ?? null
     sportsSourceEventId = sportsSourceEventId ?? existingEventSports.sports_source_event_id ?? null
     sportsSourceGameId = sportsSourceGameId ?? existingEventSports.sports_source_game_id ?? null
     sportsSourceLeagueId = sportsSourceLeagueId ?? existingEventSports.sports_source_league_id ?? null
     sportsSourceLeagueLabel = sportsSourceLeagueLabel ?? existingEventSports.sports_source_league_label ?? null
     sportsSourceMatchConfidence = sportsSourceMatchConfidence ?? existingEventSports.sports_source_match_confidence ?? null
-    sportsSourcePayload = sportsSourcePayload ?? normalizeObjectField(existingEventSports.sports_source_payload)
+    sportsSourcePayload = sportsSourcePayload ?? (
+      mayReuseExistingSourcePayload ? normalizeObjectField(existingEventSports.sports_source_payload) : null
+    )
   }
   const sportsSourceSelectedAt = sportsSourceProvider || sportsSourceEventId || sportsSourceGameId
     ? existingEventSports?.sports_source_selected_at ?? new Date()
@@ -1811,6 +1830,20 @@ function buildSportsSourcePayload(candidate: SportsSourceCandidate, selection: '
     livestreamOfficial: candidate.livestreamOfficial,
     raw: candidate.raw,
   }
+}
+
+function buildSportsSourceIdentityKey(input: {
+  provider: string | null
+  eventId: string | null
+  gameId: string | null
+  leagueId: string | null
+}) {
+  return [
+    input.provider?.trim().toLowerCase() ?? '',
+    input.eventId?.trim() ?? '',
+    input.gameId?.trim() ?? '',
+    input.leagueId?.trim() ?? '',
+  ].join('\u0000')
 }
 
 function buildSportsSourceTeamRecords(candidate: SportsSourceCandidate): Record<string, unknown>[] | null {

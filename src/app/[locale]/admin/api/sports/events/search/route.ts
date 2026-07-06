@@ -14,8 +14,22 @@ const searchSchema = z.object({
   limit: z.coerce.number().int().positive().max(25).optional(),
 })
 
+const SPORTS_SOURCE_PROVIDERS = new Set(['pandascore', 'sportmonks', 'thesportsdb'])
+
+function normalizeExplicitProviderParam(provider?: string) {
+  const providers = provider
+    ?.trim()
+    .toLowerCase()
+    .split(/[,\s]+/)
+    .map(value => value.trim())
+    .filter(value => SPORTS_SOURCE_PROVIDERS.has(value))
+    ?? []
+
+  return providers.length > 0 ? Array.from(new Set(providers)).join(',') : undefined
+}
+
 function resolveProviderParam(input: { provider?: string, category?: string }) {
-  const explicitProvider = input.provider?.trim()
+  const explicitProvider = normalizeExplicitProviderParam(input.provider)
   if (explicitProvider) {
     return explicitProvider
   }
