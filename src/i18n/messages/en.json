@@ -1224,5 +1224,19 @@
   "No86n7": "When does the {eventTitle} market close?",
   "aYvZHx": "What are traders saying about {eventTitle}?",
   "mvv67l": "What is {siteName}?",
-  "HvSrFR": "This platform is not currently available in your region."
+  "HvSrFR": "This platform is not currently available in your region.",
+  "8Itxqu": "Sports data providers",
+  "p0BMtq": "PandaScore token",
+  "U1Nf3W": "Sportmonks API token",
+  "fOH5tx": "TheSportsDB API key",
+  "jcUIrz": "Sports match: {match}",
+  "x10tiP": "Sports match",
+  "iwy4JY": "Search match",
+  "_GCoTA": "Clear",
+  "ZaE8s9": "Enter a match search first.",
+  "fN-q_B": "Could not search sports matches.",
+  "xaj9Ba": "Provider",
+  "AcEwUm": "Event ID",
+  "lS_y1w": "Game ID",
+  "S-Nyzo": "League ID"
 }

@@ -1,0 +1,814 @@
+import { loadOpenRouterProviderSettings } from '@/lib/ai/market-context-config'
+import { requestOpenRouterCompletion } from '@/lib/ai/openrouter'
+import { slugifyText } from '@/lib/slug'
+import 'server-only'
+
+export type SportsSourceProvider = 'pandascore' | 'sportmonks' | 'thesportsdb'
+
+interface SportsSourceTeam {
+  name: string
+  abbreviation?: string | null
+  slug?: string | null
+  logo?: string | null
+  hostStatus?: 'home' | 'away' | null
+}
+
+export interface SportsSourceCandidate {
+  provider: SportsSourceProvider
+  eventId: string
+  gameId: string | null
+  leagueId: string | null
+  leagueName: string | null
+  leagueSlug: string | null
+  sportSlug: string | null
+  startTime: string | null
+  homeTeam: SportsSourceTeam | null
+  awayTeam: SportsSourceTeam | null
+  score: string | null
+  period: string | null
+  elapsed: string | null
+  live: boolean | null
+  ended: boolean | null
+  livestreamUrl: string | null
+  livestreamEmbedUrl: string | null
+  livestreamProvider: string | null
+  livestreamOfficial: boolean | null
+  confidence: number
+  matchReason: string[]
+  raw: Record<string, unknown>
+}
+
+export interface SportsSourceSearchParams {
+  q?: string | null
+  sport?: string | null
+  league?: string | null
+  date?: string | null
+  provider?: string | null
+  limit?: number | null
+  auth?: SportsSourceAuth | null
+}
+
+export interface SportsSourceResolveParams {
+  provider?: string | null
+  eventId?: string | null
+  gameId?: string | null
+  auth?: SportsSourceAuth | null
+}
+
+export interface SportsSourceSuggestParams {
+  title?: string | null
+  question?: string | null
+  outcomes?: string[] | null
+  description?: string | null
+  slug?: string | null
+  tags?: string[] | null
+  date?: string | null
+  sport?: string | null
+  league?: string | null
+  limit?: number | null
+  auth?: SportsSourceAuth | null
+}
+
+interface SportsSourceAuth {
+  pandascoreToken?: string | null
+  sportmonksApiToken?: string | null
+  theSportsDbApiKey?: string | null
+}
+
+interface SportsMatchHints {
+  query: string
+  teams: string[]
+  sport: string | null
+  league: string | null
+  date: string | null
+}
+
+const DEFAULT_LIMIT = 10
+const MAX_LIMIT = 25
+const REQUEST_TIMEOUT_MS = 12_000
+const YOUTUBE_OR_TWITCH_HOST_PATTERN = /(?:^|\.)(?:youtube\.com|youtu\.be|twitch\.tv)$/i
+
+function clampLimit(value: number | null | undefined) {
+  if (!value || !Number.isFinite(value)) {
+    return DEFAULT_LIMIT
+  }
+
+  return Math.min(MAX_LIMIT, Math.max(1, Math.trunc(value)))
+}
+
+function normalizeText(value: string | null | undefined) {
+  return value?.replace(/\s+/g, ' ')?.trim() ?? ''
+}
+
+function normalizeDate(value: string | null | undefined) {
+  const normalized = normalizeText(value)
+  if (!normalized) {
+    return null
+  }
+
+  const parsed = new Date(normalized)
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString().slice(0, 10)
+  }
+
+  return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : null
+}
+
+function normalizeIso(value: unknown): string | null {
+  if (typeof value !== 'string' && typeof value !== 'number') {
+    return null
+  }
+
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
+}
+
+function normalizeStringId(value: unknown): string | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(Math.trunc(value))
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim()
+    return normalized || null
+  }
+  return null
+}
+
+function normalizeHttpsUrl(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null
+  }
+
+  try {
+    const url = new URL(value.trim())
+    return url.protocol === 'https:' ? url.toString() : null
+  }
+  catch {
+    return null
+  }
+}
+
+function detectLivestreamProvider(value: string | null) {
+  if (!value) {
+    return null
+  }
+
+  try {
+    const hostname = new URL(value).hostname
+    if (/twitch\.tv$/i.test(hostname)) {
+      return 'twitch'
+    }
+    if (/(?:youtube\.com|youtu\.be)$/i.test(hostname)) {
+      return 'youtube'
+    }
+    return hostname
+  }
+  catch {
+    return null
+  }
+}
+
+function isPreferredLivestreamUrl(value: string | null) {
+  if (!value) {
+    return false
+  }
+
+  try {
+    return YOUTUBE_OR_TWITCH_HOST_PATTERN.test(new URL(value).hostname)
+  }
+  catch {
+    return false
+  }
+}
+
+function normalizeBoolean(value: unknown): boolean | null {
+  if (typeof value === 'boolean') {
+    return value
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (normalized === 'true' || normalized === '1') {
+      return true
+    }
+    if (normalized === 'false' || normalized === '0') {
+      return false
+    }
+  }
+  return null
+}
+
+function tokenSet(value: string | null | undefined) {
+  return new Set(normalizeText(value)
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(token => token.length >= 2))
+}
+
+function tokenOverlap(left: string | null | undefined, right: string | null | undefined) {
+  const leftTokens = tokenSet(left)
+  const rightTokens = tokenSet(right)
+  if (!leftTokens.size || !rightTokens.size) {
+    return 0
+  }
+
+  let matches = 0
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) {
+      matches += 1
+    }
+  }
+
+  return matches / Math.max(leftTokens.size, rightTokens.size)
+}
+
+function buildCandidateText(candidate: SportsSourceCandidate) {
+  return [
+    candidate.homeTeam?.name,
+    candidate.awayTeam?.name,
+    candidate.leagueName,
+    candidate.sportSlug,
+  ].filter(Boolean).join(' ')
+}
+
+function buildHintsFromParams(input: SportsSourceSuggestParams): SportsMatchHints {
+  const contentParts = [
+    input.title,
+    input.question,
+    input.description,
+    input.slug?.replace(/-/g, ' '),
+    ...(input.outcomes ?? []),
+  ].map(value => normalizeText(value ?? '')).filter(Boolean)
+
+  const query = normalizeText(contentParts.join(' '))
+  return {
+    query,
+    teams: normalizeText((input.outcomes ?? []).join(' vs ')).split(/\s+(?:vs\.?|v\.?|at|@)\s+/i).filter(Boolean),
+    sport: normalizeText(input.sport ?? '') || null,
+    league: normalizeText(input.league ?? '') || null,
+    date: normalizeDate(input.date ?? null),
+  }
+}
+
+function mergeHints(base: SportsMatchHints, aiHints: Partial<SportsMatchHints> | null): SportsMatchHints {
+  if (!aiHints) {
+    return base
+  }
+
+  return {
+    query: normalizeText(aiHints.query ?? '') || base.query,
+    teams: Array.isArray(aiHints.teams) && aiHints.teams.length > 0
+      ? aiHints.teams.map(team => normalizeText(team)).filter(Boolean)
+      : base.teams,
+    sport: normalizeText(aiHints.sport ?? '') || base.sport,
+    league: normalizeText(aiHints.league ?? '') || base.league,
+    date: normalizeDate(aiHints.date ?? null) ?? base.date,
+  }
+}
+
+async function extractHintsWithAi(input: SportsSourceSuggestParams, baseHints: SportsMatchHints) {
+  const openRouterSettings = await loadOpenRouterProviderSettings()
+  const apiKey = openRouterSettings.apiKey
+  const model = openRouterSettings.model || 'openai/gpt-4o-mini'
+
+  if (!apiKey) {
+    return baseHints
+  }
+
+  try {
+    const content = await requestOpenRouterCompletion([
+      {
+        role: 'system',
+        content: 'Extract sports match search hints. Return compact JSON only with keys query, teams, sport, league, date. Do not include creator identity, wallet, or platform origin.',
+      },
+      {
+        role: 'user',
+        content: JSON.stringify({
+          title: input.title,
+          question: input.question,
+          outcomes: input.outcomes,
+          description: input.description,
+          slug: input.slug,
+          tags: input.tags,
+          date: input.date,
+        }),
+      },
+    ], {
+      apiKey,
+      model,
+      temperature: 0,
+      maxTokens: 220,
+    })
+
+    const jsonText = content.match(/\{[\s\S]*\}/)?.[0] ?? content
+    const parsed = JSON.parse(jsonText) as Partial<SportsMatchHints>
+    return mergeHints(baseHints, parsed)
+  }
+  catch (error) {
+    console.error('Sports match AI hint extraction failed:', error)
+    return baseHints
+  }
+}
+
+function scoreSportsCandidate(
+  input: SportsSourceSuggestParams,
+  candidate: SportsSourceCandidate,
+  hints = buildHintsFromParams(input),
+) {
+  const reasons: string[] = []
+  let score = 0
+
+  const candidateText = buildCandidateText(candidate)
+  const contentScore = tokenOverlap(hints.query, candidateText)
+  if (contentScore > 0) {
+    score += contentScore * 0.45
+    reasons.push('content')
+  }
+
+  for (const team of hints.teams) {
+    const homeScore = tokenOverlap(team, candidate.homeTeam?.name)
+    const awayScore = tokenOverlap(team, candidate.awayTeam?.name)
+    const bestTeamScore = Math.max(homeScore, awayScore)
+    if (bestTeamScore > 0) {
+      score += Math.min(0.18, bestTeamScore * 0.18)
+      reasons.push('team')
+    }
+  }
+
+  const sportSlug = slugifyText(hints.sport ?? '')
+  if (sportSlug && candidate.sportSlug === sportSlug) {
+    score += 0.12
+    reasons.push('sport')
+  }
+
+  const leagueSlug = slugifyText(hints.league ?? '')
+  if (leagueSlug && candidate.leagueSlug === leagueSlug) {
+    score += 0.12
+    reasons.push('league')
+  }
+
+  const targetDate = hints.date ?? normalizeDate(input.date ?? null)
+  if (targetDate && candidate.startTime?.slice(0, 10) === targetDate) {
+    score += 0.13
+    reasons.push('date')
+  }
+
+  return {
+    confidence: Math.min(1, Number(score.toFixed(4))),
+    matchReason: Array.from(new Set(reasons)),
+  }
+}
+
+function chooseBestStream(streams: unknown): {
+  livestreamUrl: string | null
+  livestreamEmbedUrl: string | null
+  livestreamProvider: string | null
+  livestreamOfficial: boolean | null
+} {
+  if (!Array.isArray(streams)) {
+    return {
+      livestreamUrl: null,
+      livestreamEmbedUrl: null,
+      livestreamProvider: null,
+      livestreamOfficial: null,
+    }
+  }
+
+  const candidates = streams
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+    .map((stream) => {
+      const rawUrl = normalizeHttpsUrl(stream.raw_url ?? stream.url)
+      const embedUrl = normalizeHttpsUrl(stream.embed_url)
+      return {
+        rawUrl,
+        embedUrl,
+        official: normalizeBoolean(stream.official),
+        main: normalizeBoolean(stream.main),
+        preferred: isPreferredLivestreamUrl(rawUrl) || isPreferredLivestreamUrl(embedUrl),
+      }
+    })
+    .filter(stream => stream.rawUrl || stream.embedUrl)
+    .sort((left, right) => {
+      const leftScore = (left.main ? 4 : 0) + (left.official ? 3 : 0) + (left.preferred ? 2 : 0)
+      const rightScore = (right.main ? 4 : 0) + (right.official ? 3 : 0) + (right.preferred ? 2 : 0)
+      return rightScore - leftScore
+    })
+
+  const selected = candidates[0]
+  const livestreamUrl = selected?.rawUrl ?? selected?.embedUrl ?? null
+  return {
+    livestreamUrl,
+    livestreamEmbedUrl: selected?.embedUrl ?? null,
+    livestreamProvider: detectLivestreamProvider(livestreamUrl),
+    livestreamOfficial: selected?.official ?? null,
+  }
+}
+
+function buildScore(homeScore: unknown, awayScore: unknown) {
+  const home = normalizeStringId(homeScore)
+  const away = normalizeStringId(awayScore)
+  return home !== null && away !== null ? `${home}-${away}` : null
+}
+
+async function fetchJson(url: URL, headers?: HeadersInit) {
+  const response = await fetch(url, {
+    method: 'GET',
+    cache: 'no-store',
+    headers,
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Sports provider request failed: ${response.status}`)
+  }
+
+  return response.json() as Promise<unknown>
+}
+
+function normalizePandaScoreMatch(raw: Record<string, unknown>): SportsSourceCandidate | null {
+  const eventId = normalizeStringId(raw.id)
+  if (!eventId) {
+    return null
+  }
+
+  const opponents = Array.isArray(raw.opponents) ? raw.opponents : []
+  const normalizedOpponents = opponents
+    .map(item => (item && typeof item === 'object' && !Array.isArray(item)) ? item as Record<string, unknown> : null)
+    .filter((item): item is Record<string, unknown> => Boolean(item))
+    .map((item, index) => {
+      const opponent = item.opponent && typeof item.opponent === 'object' && !Array.isArray(item.opponent)
+        ? item.opponent as Record<string, unknown>
+        : item
+      const name = normalizeText(String(opponent.name ?? ''))
+      return {
+        name,
+        abbreviation: normalizeStringId(opponent.acronym),
+        slug: normalizeText(String(opponent.slug ?? '')) || slugifyText(name),
+        logo: normalizeHttpsUrl(opponent.image_url),
+        hostStatus: index === 0 ? 'home' as const : 'away' as const,
+      }
+    })
+    .filter(team => team.name)
+
+  const league = raw.league && typeof raw.league === 'object' && !Array.isArray(raw.league)
+    ? raw.league as Record<string, unknown>
+    : null
+  const videogame = raw.videogame && typeof raw.videogame === 'object' && !Array.isArray(raw.videogame)
+    ? raw.videogame as Record<string, unknown>
+    : null
+  const results = Array.isArray(raw.results) ? raw.results : []
+  const homeResult = results[0] && typeof results[0] === 'object' ? results[0] as Record<string, unknown> : null
+  const awayResult = results[1] && typeof results[1] === 'object' ? results[1] as Record<string, unknown> : null
+  const stream = chooseBestStream(raw.streams_list)
+  const status = normalizeText(String(raw.status ?? '')).toLowerCase()
+
+  return {
+    provider: 'pandascore',
+    eventId,
+    gameId: null,
+    leagueId: normalizeStringId(league?.id),
+    leagueName: normalizeText(String(league?.name ?? '')) || null,
+    leagueSlug: normalizeText(String(league?.slug ?? '')) || null,
+    sportSlug: normalizeText(String(videogame?.slug ?? '')) || null,
+    startTime: normalizeIso(raw.begin_at),
+    homeTeam: normalizedOpponents[0] ?? null,
+    awayTeam: normalizedOpponents[1] ?? null,
+    score: buildScore(homeResult?.score, awayResult?.score),
+    period: status || null,
+    elapsed: null,
+    live: status === 'running',
+    ended: status === 'finished',
+    ...stream,
+    confidence: 0,
+    matchReason: [],
+    raw,
+  }
+}
+
+async function searchPandaScore(params: SportsSourceSearchParams): Promise<SportsSourceCandidate[]> {
+  const token = params.auth?.pandascoreToken?.trim()
+  if (!token) {
+    return []
+  }
+
+  const url = new URL('https://api.pandascore.co/matches')
+  url.searchParams.set('per_page', String(clampLimit(params.limit)))
+  const q = normalizeText(params.q)
+  if (q) {
+    url.searchParams.set('search[name]', q)
+  }
+  if (params.date) {
+    const date = normalizeDate(params.date)
+    if (date) {
+      url.searchParams.set('range[begin_at]', `${date}T00:00:00Z,${date}T23:59:59Z`)
+    }
+  }
+
+  const payload = await fetchJson(url, { Authorization: `Bearer ${token}` })
+  return (Array.isArray(payload) ? payload : [])
+    .map(item => (item && typeof item === 'object' && !Array.isArray(item)) ? normalizePandaScoreMatch(item as Record<string, unknown>) : null)
+    .filter((item): item is SportsSourceCandidate => Boolean(item))
+}
+
+async function resolvePandaScore(params: SportsSourceResolveParams): Promise<SportsSourceCandidate | null> {
+  const token = params.auth?.pandascoreToken?.trim()
+  const id = normalizeStringId(params.eventId ?? params.gameId)
+  if (!token || !id) {
+    return null
+  }
+
+  const url = new URL(`https://api.pandascore.co/matches/${encodeURIComponent(id)}`)
+  const payload = await fetchJson(url, { Authorization: `Bearer ${token}` })
+  return payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? normalizePandaScoreMatch(payload as Record<string, unknown>)
+    : null
+}
+
+function normalizeTheSportsDbEvent(raw: Record<string, unknown>): SportsSourceCandidate | null {
+  const eventId = normalizeStringId(raw.idEvent)
+  if (!eventId) {
+    return null
+  }
+
+  const homeName = normalizeText(String(raw.strHomeTeam ?? ''))
+  const awayName = normalizeText(String(raw.strAwayTeam ?? ''))
+  const startTime = normalizeIso(raw.strTimestamp)
+    ?? normalizeIso(`${normalizeText(String(raw.dateEvent ?? ''))}T${normalizeText(String(raw.strTime ?? '00:00:00'))}Z`)
+  const status = normalizeText(String(raw.strStatus ?? '')).toLowerCase()
+
+  return {
+    provider: 'thesportsdb',
+    eventId,
+    gameId: null,
+    leagueId: normalizeStringId(raw.idLeague),
+    leagueName: normalizeText(String(raw.strLeague ?? '')) || null,
+    leagueSlug: slugifyText(String(raw.strLeague ?? '')) || null,
+    sportSlug: slugifyText(String(raw.strSport ?? '')) || null,
+    startTime,
+    homeTeam: homeName ? { name: homeName, slug: slugifyText(homeName), hostStatus: 'home' } : null,
+    awayTeam: awayName ? { name: awayName, slug: slugifyText(awayName), hostStatus: 'away' } : null,
+    score: buildScore(raw.intHomeScore, raw.intAwayScore),
+    period: status || null,
+    elapsed: null,
+    live: status.includes('live') ? true : null,
+    ended: status.includes('match finished') || status.includes('finished') ? true : null,
+    livestreamUrl: null,
+    livestreamEmbedUrl: null,
+    livestreamProvider: null,
+    livestreamOfficial: null,
+    confidence: 0,
+    matchReason: [],
+    raw,
+  }
+}
+
+async function searchTheSportsDb(params: SportsSourceSearchParams): Promise<SportsSourceCandidate[]> {
+  const key = params.auth?.theSportsDbApiKey?.trim()
+  const q = normalizeText(params.q)
+  if (!key || !q) {
+    return []
+  }
+
+  const url = new URL(`https://www.thesportsdb.com/api/v1/json/${encodeURIComponent(key)}/searchevents.php`)
+  url.searchParams.set('e', q)
+  const payload = await fetchJson(url)
+  const events = payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? (payload as Record<string, unknown>).event
+    : null
+
+  return (Array.isArray(events) ? events : [])
+    .map(item => (item && typeof item === 'object' && !Array.isArray(item)) ? normalizeTheSportsDbEvent(item as Record<string, unknown>) : null)
+    .filter((item): item is SportsSourceCandidate => Boolean(item))
+    .slice(0, clampLimit(params.limit))
+}
+
+async function resolveTheSportsDb(params: SportsSourceResolveParams): Promise<SportsSourceCandidate | null> {
+  const key = params.auth?.theSportsDbApiKey?.trim()
+  const id = normalizeStringId(params.eventId ?? params.gameId)
+  if (!key || !id) {
+    return null
+  }
+
+  const url = new URL(`https://www.thesportsdb.com/api/v1/json/${encodeURIComponent(key)}/lookupevent.php`)
+  url.searchParams.set('id', id)
+  const payload = await fetchJson(url)
+  const events = payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? (payload as Record<string, unknown>).events
+    : null
+  const first = Array.isArray(events) ? events[0] : null
+  return first && typeof first === 'object' && !Array.isArray(first)
+    ? normalizeTheSportsDbEvent(first as Record<string, unknown>)
+    : null
+}
+
+function normalizeSportmonksFixture(raw: Record<string, unknown>): SportsSourceCandidate | null {
+  const eventId = normalizeStringId(raw.id)
+  if (!eventId) {
+    return null
+  }
+
+  const league = raw.league && typeof raw.league === 'object' && !Array.isArray(raw.league)
+    ? raw.league as Record<string, unknown>
+    : null
+  const participants = Array.isArray(raw.participants) ? raw.participants : []
+  const teams = participants
+    .map((item): SportsSourceTeam | null => {
+      const team = item && typeof item === 'object' && !Array.isArray(item) ? item as Record<string, unknown> : null
+      if (!team) {
+        return null
+      }
+      const meta = team.meta && typeof team.meta === 'object' && !Array.isArray(team.meta)
+        ? team.meta as Record<string, unknown>
+        : null
+      const location = normalizeText(String(meta?.location ?? '')).toLowerCase()
+      const name = normalizeText(String(team.name ?? ''))
+      return {
+        name,
+        abbreviation: normalizeStringId(team.short_code),
+        slug: slugifyText(name),
+        logo: normalizeHttpsUrl(team.image_path),
+        hostStatus: location === 'home' ? 'home' as const : location === 'away' ? 'away' as const : null,
+      }
+    })
+    .filter((item): item is SportsSourceTeam => item !== null && Boolean(item.name))
+  const homeTeam = teams.find(team => team.hostStatus === 'home') ?? teams[0] ?? null
+  const awayTeam = teams.find(team => team.hostStatus === 'away') ?? teams.find(team => team !== homeTeam) ?? null
+  const tvStations = Array.isArray(raw.tvstations) ? raw.tvstations : Array.isArray(raw.tvStations) ? raw.tvStations : []
+  const tvStationStream = chooseBestStream(tvStations.map((station) => {
+    if (!station || typeof station !== 'object' || Array.isArray(station)) {
+      return null
+    }
+    const item = station as Record<string, unknown>
+    return {
+      raw_url: item.url,
+      official: true,
+      main: false,
+    }
+  }).filter(Boolean))
+  const stream = isPreferredLivestreamUrl(tvStationStream.livestreamUrl)
+    ? tvStationStream
+    : {
+        livestreamUrl: null,
+        livestreamEmbedUrl: null,
+        livestreamProvider: null,
+        livestreamOfficial: null,
+      }
+  const state = raw.state && typeof raw.state === 'object' && !Array.isArray(raw.state)
+    ? raw.state as Record<string, unknown>
+    : null
+  const stateName = normalizeText(String(state?.name ?? raw.state_name ?? ''))
+
+  return {
+    provider: 'sportmonks',
+    eventId,
+    gameId: null,
+    leagueId: normalizeStringId(raw.league_id ?? league?.id),
+    leagueName: normalizeText(String(league?.name ?? '')) || null,
+    leagueSlug: slugifyText(String(league?.name ?? '')) || null,
+    sportSlug: 'soccer',
+    startTime: normalizeIso(raw.starting_at),
+    homeTeam,
+    awayTeam,
+    score: null,
+    period: stateName || null,
+    elapsed: null,
+    live: stateName.toLowerCase().includes('live') ? true : null,
+    ended: stateName.toLowerCase().includes('finished') ? true : null,
+    ...stream,
+    confidence: 0,
+    matchReason: [],
+    raw,
+  }
+}
+
+async function searchSportmonks(params: SportsSourceSearchParams): Promise<SportsSourceCandidate[]> {
+  const token = params.auth?.sportmonksApiToken?.trim()
+  const q = normalizeText(params.q)
+  if (!token || !q) {
+    return []
+  }
+
+  const url = new URL(`https://api.sportmonks.com/v3/football/fixtures/search/${encodeURIComponent(q)}`)
+  url.searchParams.set('api_token', token)
+  url.searchParams.set('include', 'participants;league;state;tvstations')
+  const payload = await fetchJson(url)
+  const data = payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? (payload as Record<string, unknown>).data
+    : null
+
+  return (Array.isArray(data) ? data : [])
+    .map(item => (item && typeof item === 'object' && !Array.isArray(item)) ? normalizeSportmonksFixture(item as Record<string, unknown>) : null)
+    .filter((item): item is SportsSourceCandidate => Boolean(item))
+    .slice(0, clampLimit(params.limit))
+}
+
+async function resolveSportmonks(params: SportsSourceResolveParams): Promise<SportsSourceCandidate | null> {
+  const token = params.auth?.sportmonksApiToken?.trim()
+  const id = normalizeStringId(params.eventId ?? params.gameId)
+  if (!token || !id) {
+    return null
+  }
+
+  const url = new URL(`https://api.sportmonks.com/v3/football/fixtures/${encodeURIComponent(id)}`)
+  url.searchParams.set('api_token', token)
+  url.searchParams.set('include', 'participants;league;state;tvstations')
+  const payload = await fetchJson(url)
+  const data = payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? (payload as Record<string, unknown>).data
+    : null
+  return data && typeof data === 'object' && !Array.isArray(data)
+    ? normalizeSportmonksFixture(data as Record<string, unknown>)
+    : null
+}
+
+function providerList(provider?: string | null): SportsSourceProvider[] {
+  const normalized = normalizeText(provider).toLowerCase()
+  if (normalized === 'pandascore' || normalized === 'sportmonks' || normalized === 'thesportsdb') {
+    return [normalized]
+  }
+
+  return ['pandascore', 'sportmonks', 'thesportsdb']
+}
+
+async function runProviderSearch(provider: SportsSourceProvider, params: SportsSourceSearchParams) {
+  switch (provider) {
+    case 'pandascore':
+      return searchPandaScore(params)
+    case 'sportmonks':
+      return searchSportmonks(params)
+    case 'thesportsdb':
+      return searchTheSportsDb(params)
+  }
+}
+
+async function runProviderResolve(provider: SportsSourceProvider, params: SportsSourceResolveParams) {
+  switch (provider) {
+    case 'pandascore':
+      return resolvePandaScore(params)
+    case 'sportmonks':
+      return resolveSportmonks(params)
+    case 'thesportsdb':
+      return resolveTheSportsDb(params)
+  }
+}
+
+export async function searchSportsEvents(params: SportsSourceSearchParams) {
+  const providers = providerList(params.provider)
+  const results = await Promise.allSettled(providers.map(provider => runProviderSearch(provider, params)))
+  return results
+    .flatMap((result) => {
+      if (result.status === 'fulfilled') {
+        return result.value
+      }
+      console.error('Sports provider search failed:', result.reason)
+      return []
+    })
+    .slice(0, clampLimit(params.limit))
+}
+
+export async function resolveSportsEvent(params: SportsSourceResolveParams) {
+  const providers = providerList(params.provider)
+  for (const provider of providers) {
+    try {
+      const candidate = await runProviderResolve(provider, params)
+      if (candidate) {
+        return candidate
+      }
+    }
+    catch (error) {
+      console.error('Sports provider resolve failed:', error)
+    }
+  }
+
+  return null
+}
+
+export async function suggestSportsEvents(params: SportsSourceSuggestParams) {
+  const limit = clampLimit(params.limit)
+  const baseHints = buildHintsFromParams(params)
+  const hints = await extractHintsWithAi(params, baseHints)
+  const query = hints.query || normalizeText(params.title ?? params.question ?? '')
+  if (!query) {
+    return []
+  }
+
+  const candidates = await searchSportsEvents({
+    q: query,
+    sport: hints.sport ?? params.sport,
+    league: hints.league ?? params.league,
+    date: hints.date ?? params.date,
+    limit,
+    auth: params.auth,
+  })
+
+  return candidates
+    .map((candidate) => {
+      const scored = scoreSportsCandidate(params, candidate, hints)
+      return {
+        ...candidate,
+        confidence: scored.confidence,
+        matchReason: scored.matchReason,
+      }
+    })
+    .sort((left, right) => right.confidence - left.confidence)
+    .slice(0, limit)
+}

@@ -244,6 +244,9 @@ export async function updateGeneralSettingsAction(
   const lifiApiKeyRaw = formData.get('lifi_api_key')
   const openRouterModelRaw = formData.get('openrouter_model')
   const openRouterApiKeyRaw = formData.get('openrouter_api_key')
+  const sportsPandaScoreTokenRaw = formData.get('sports_pandascore_token')
+  const sportsSportmonksApiTokenRaw = formData.get('sports_sportmonks_api_token')
+  const sportsTheSportsDbApiKeyRaw = formData.get('sports_thesportsdb_api_key')
   const blockedCountriesRaw = formData.get('blocked_countries')
   const homeFeaturedEnabledRaw = formData.get('home_featured_enabled')
   const homeFeaturedUseAiRaw = formData.get('home_featured_use_ai')
@@ -294,6 +297,9 @@ export async function updateGeneralSettingsAction(
   const lifiApiKey = typeof lifiApiKeyRaw === 'string' ? lifiApiKeyRaw : ''
   const openRouterModel = typeof openRouterModelRaw === 'string' ? openRouterModelRaw.trim() : ''
   const openRouterApiKey = typeof openRouterApiKeyRaw === 'string' ? openRouterApiKeyRaw.trim() : ''
+  const sportsPandaScoreToken = typeof sportsPandaScoreTokenRaw === 'string' ? sportsPandaScoreTokenRaw.trim() : ''
+  const sportsSportmonksApiToken = typeof sportsSportmonksApiTokenRaw === 'string' ? sportsSportmonksApiTokenRaw.trim() : ''
+  const sportsTheSportsDbApiKey = typeof sportsTheSportsDbApiKeyRaw === 'string' ? sportsTheSportsDbApiKeyRaw.trim() : ''
   const blockedCountriesInput = typeof blockedCountriesRaw === 'string' ? blockedCountriesRaw : ''
   const homeFeaturedEventsJson = typeof homeFeaturedEventsJsonRaw === 'string' ? homeFeaturedEventsJsonRaw : ''
 
@@ -303,6 +309,15 @@ export async function updateGeneralSettingsAction(
 
   if (openRouterApiKey.length > 256) {
     return { error: 'OpenRouter API key is too long.' }
+  }
+  if (sportsPandaScoreToken.length > 512) {
+    return { error: 'PandaScore token is too long.' }
+  }
+  if (sportsSportmonksApiToken.length > 512) {
+    return { error: 'Sportmonks API token is too long.' }
+  }
+  if (sportsTheSportsDbApiKey.length > 512) {
+    return { error: 'TheSportsDB API key is too long.' }
   }
 
   const validatedGlobalAnnouncement = validateGlobalAnnouncementInput({
@@ -431,6 +446,9 @@ export async function updateGeneralSettingsAction(
 
   let encryptedLiFiApiKey = ''
   let encryptedOpenRouterApiKey = ''
+  let encryptedSportsPandaScoreToken = ''
+  let encryptedSportsSportmonksApiToken = ''
+  let encryptedSportsTheSportsDbApiKey = ''
   try {
     const { data: allSettings, error: settingsError } = await SettingsRepository.getSettings()
     if (settingsError) {
@@ -439,12 +457,24 @@ export async function updateGeneralSettingsAction(
 
     const existingEncryptedLiFiApiKey = allSettings?.general?.lifi_api_key?.value ?? ''
     const existingEncryptedOpenRouterApiKey = allSettings?.ai?.openrouter_api_key?.value ?? ''
+    const existingEncryptedSportsPandaScoreToken = allSettings?.ai?.sports_pandascore_token?.value ?? ''
+    const existingEncryptedSportsSportmonksApiToken = allSettings?.ai?.sports_sportmonks_api_token?.value ?? ''
+    const existingEncryptedSportsTheSportsDbApiKey = allSettings?.ai?.sports_thesportsdb_api_key?.value ?? ''
     encryptedLiFiApiKey = validated.data.lifiApiKeyValue
       ? encryptSecret(validated.data.lifiApiKeyValue)
       : existingEncryptedLiFiApiKey
     encryptedOpenRouterApiKey = openRouterApiKey
       ? encryptSecret(openRouterApiKey)
       : existingEncryptedOpenRouterApiKey
+    encryptedSportsPandaScoreToken = sportsPandaScoreToken
+      ? encryptSecret(sportsPandaScoreToken)
+      : existingEncryptedSportsPandaScoreToken
+    encryptedSportsSportmonksApiToken = sportsSportmonksApiToken
+      ? encryptSecret(sportsSportmonksApiToken)
+      : existingEncryptedSportsSportmonksApiToken
+    encryptedSportsTheSportsDbApiKey = sportsTheSportsDbApiKey
+      ? encryptSecret(sportsTheSportsDbApiKey)
+      : existingEncryptedSportsTheSportsDbApiKey
   }
   catch (error) {
     console.error('Failed to encrypt API keys', error)
@@ -479,6 +509,9 @@ export async function updateGeneralSettingsAction(
     { group: 'general', key: 'lifi_api_key', value: encryptedLiFiApiKey },
     { group: 'ai', key: 'openrouter_model', value: openRouterModel },
     { group: 'ai', key: 'openrouter_api_key', value: encryptedOpenRouterApiKey },
+    { group: 'ai', key: 'sports_pandascore_token', value: encryptedSportsPandaScoreToken },
+    { group: 'ai', key: 'sports_sportmonks_api_token', value: encryptedSportsSportmonksApiToken },
+    { group: 'ai', key: 'sports_thesportsdb_api_key', value: encryptedSportsTheSportsDbApiKey },
     ...(validatedHomeFeaturedData ? buildHomeFeaturedSettingsUpdateRows(validatedHomeFeaturedData) : []),
   ]
 

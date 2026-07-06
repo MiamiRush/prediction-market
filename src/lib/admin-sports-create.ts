@@ -42,6 +42,13 @@ export interface AdminSportsFormState {
   sportSlug: string
   leagueSlug: string
   startTime: string
+  sourceProvider: string
+  sourceEventId: string
+  sourceGameId: string
+  sourceLeagueId: string
+  sourceLeagueLabel: string
+  sourceMatchConfidence: string
+  livestreamUrl: string
   includeDraw: boolean
   includeBothTeamsToScore: boolean
   includeSpreads: boolean
@@ -58,6 +65,13 @@ interface AdminSportsPreparePayload {
   leagueSlug?: string
   eventDate?: string
   startTime?: string
+  sourceProvider?: string
+  sourceEventId?: string
+  sourceGameId?: string
+  sourceLeagueId?: string
+  sourceLeagueLabel?: string
+  sourceMatchConfidence?: number
+  livestreamUrl?: string
   teams?: Array<{
     name: string
     abbreviation?: string
@@ -377,6 +391,13 @@ export function createInitialAdminSportsForm(): AdminSportsFormState {
     sportSlug: '',
     leagueSlug: '',
     startTime: '',
+    sourceProvider: '',
+    sourceEventId: '',
+    sourceGameId: '',
+    sourceLeagueId: '',
+    sourceLeagueLabel: '',
+    sourceMatchConfidence: '',
+    livestreamUrl: '',
     includeDraw: false,
     includeBothTeamsToScore: true,
     includeSpreads: true,
@@ -995,7 +1016,9 @@ export function buildAdminSportsDerivedContent(args: {
       host_status: team.hostStatus,
     }))
 
-    if (isGamesSection && teams.some(team => !team.name)) {
+    const hasSourceIdentity = Boolean(args.sports.sourceEventId.trim() || args.sports.sourceGameId.trim())
+
+    if (isGamesSection && !hasSourceIdentity && teams.some(team => !team.name)) {
       return null
     }
 
@@ -1068,7 +1091,7 @@ export function buildAdminSportsDerivedContent(args: {
       return null
     }
 
-    if (isGamesSection && (!args.sports.sportSlug.trim() || !args.sports.leagueSlug.trim() || !eventDate || !startTimeIso)) {
+    if (isGamesSection && !hasSourceIdentity && (!args.sports.sportSlug.trim() || !args.sports.leagueSlug.trim() || !eventDate || !startTimeIso)) {
       return null
     }
 
@@ -1088,11 +1111,43 @@ export function buildAdminSportsDerivedContent(args: {
     }
 
     if (isGamesSection) {
-      payloadBase.sportSlug = slugify(args.sports.sportSlug)
-      payloadBase.leagueSlug = slugify(args.sports.leagueSlug)
-      payloadBase.eventDate = eventDate
-      payloadBase.startTime = startTimeIso
-      payloadBase.teams = teams
+      if (args.sports.sportSlug.trim()) {
+        payloadBase.sportSlug = slugify(args.sports.sportSlug)
+      }
+      if (args.sports.leagueSlug.trim()) {
+        payloadBase.leagueSlug = slugify(args.sports.leagueSlug)
+      }
+      if (eventDate) {
+        payloadBase.eventDate = eventDate
+      }
+      if (startTimeIso) {
+        payloadBase.startTime = startTimeIso
+      }
+      if (teams.length > 0 && teams.every(team => team.name)) {
+        payloadBase.teams = teams
+      }
+      if (args.sports.sourceProvider.trim()) {
+        payloadBase.sourceProvider = normalizeText(args.sports.sourceProvider)
+      }
+      if (args.sports.sourceEventId.trim()) {
+        payloadBase.sourceEventId = normalizeText(args.sports.sourceEventId)
+      }
+      if (args.sports.sourceGameId.trim()) {
+        payloadBase.sourceGameId = normalizeText(args.sports.sourceGameId)
+      }
+      if (args.sports.sourceLeagueId.trim()) {
+        payloadBase.sourceLeagueId = normalizeText(args.sports.sourceLeagueId)
+      }
+      if (args.sports.sourceLeagueLabel.trim()) {
+        payloadBase.sourceLeagueLabel = normalizeText(args.sports.sourceLeagueLabel)
+      }
+      const sourceMatchConfidence = Number(args.sports.sourceMatchConfidence)
+      if (Number.isFinite(sourceMatchConfidence)) {
+        payloadBase.sourceMatchConfidence = sourceMatchConfidence
+      }
+      if (args.sports.livestreamUrl.trim()) {
+        payloadBase.livestreamUrl = normalizeText(args.sports.livestreamUrl)
+      }
     }
 
     return payloadBase
@@ -1116,6 +1171,7 @@ export function buildAdminSportsStepErrors(args: {
   const { homeTeam, awayTeam } = buildTeamPair(args.sports.teams)
   const homeName = normalizeText(homeTeam?.name ?? '')
   const awayName = normalizeText(awayTeam?.name ?? '')
+  const hasSourceIdentity = Boolean(args.sports.sourceEventId.trim() || args.sports.sourceGameId.trim())
 
   if (args.step === 1) {
     if (!args.sports.section) {
@@ -1123,23 +1179,25 @@ export function buildAdminSportsStepErrors(args: {
     }
 
     if (args.sports.section === 'games') {
-      if (!args.sports.sportSlug.trim()) {
-        errors.push('Sport slug is required for sports games.')
-      }
-      if (!args.sports.leagueSlug.trim()) {
-        errors.push('League slug is required for sports games.')
-      }
-      if (!args.sports.startTime.trim()) {
-        errors.push('Game start time is required for sports games.')
-      }
-      else if (!eventDate) {
-        errors.push('Game start time is invalid.')
-      }
-      if (!homeName || !awayName) {
-        errors.push('Sports games require both home and away teams.')
-      }
-      if (!args.hasTeamLogoByHostStatus.home || !args.hasTeamLogoByHostStatus.away) {
-        errors.push('Sports games require a logo for both home and away teams.')
+      if (!hasSourceIdentity) {
+        if (!args.sports.sportSlug.trim()) {
+          errors.push('Select a sports match or enter a sport slug.')
+        }
+        if (!args.sports.leagueSlug.trim()) {
+          errors.push('Select a sports match or enter a league slug.')
+        }
+        if (!args.sports.startTime.trim()) {
+          errors.push('Select a sports match or enter the game start time.')
+        }
+        else if (!eventDate) {
+          errors.push('Game start time is invalid.')
+        }
+        if (!homeName || !awayName) {
+          errors.push('Select a sports match or enter both home and away teams.')
+        }
+        if (!args.hasTeamLogoByHostStatus.home || !args.hasTeamLogoByHostStatus.away) {
+          errors.push('Sports games require a logo for both home and away teams.')
+        }
       }
     }
   }
@@ -1170,6 +1228,13 @@ export function buildAdminSportsStepErrors(args: {
         && slugify(args.sports.sportSlug) !== 'soccer'
       ) {
         errors.push('More Markets, Exact Score, and Halftime Result currently require sport slug "soccer".')
+      }
+
+      if (
+        args.sports.eventVariant !== 'custom'
+        && (!args.sports.sportSlug.trim() || !args.sports.leagueSlug.trim() || !eventDate || !homeName || !awayName)
+      ) {
+        errors.push('Generated sports templates require full game details.')
       }
 
       if (

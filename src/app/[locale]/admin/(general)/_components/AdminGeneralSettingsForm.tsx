@@ -48,6 +48,12 @@ interface OpenRouterGeneralSettings {
   modelsError?: string
 }
 
+interface SportsSourceGeneralSettings {
+  isPandaScoreTokenConfigured: boolean
+  isSportmonksApiTokenConfigured: boolean
+  isTheSportsDbApiKeyConfigured: boolean
+}
+
 interface InitialGlobalAnnouncementSettings {
   message: string
   linkUrl: string
@@ -65,6 +71,7 @@ interface AdminGeneralSettingsFormProps {
   initialHomeFeaturedSettings?: HomeFeaturedSettings
   initialHomeFeaturedEvents?: HomeFeaturedEventAdminItem[]
   openRouterSettings: OpenRouterGeneralSettings
+  sportsSourceSettings: SportsSourceGeneralSettings
 }
 
 interface CustomJavascriptCodeDraft extends CustomJavascriptCodeConfig {
@@ -92,6 +99,7 @@ function AdminGeneralSettingsFormInner({
   initialHomeFeaturedSettings,
   initialHomeFeaturedEvents,
   openRouterSettings,
+  sportsSourceSettings,
 }: AdminGeneralSettingsFormProps) {
   const t = useExtracted()
   const resolvedInitialHomeFeaturedSettings = initialHomeFeaturedSettings ?? DEFAULT_HOME_FEATURED_SETTINGS
@@ -125,6 +133,9 @@ function AdminGeneralSettingsFormInner({
   const initialLiFiApiKeyConfigured = initialThemeSiteSettings.lifiApiKeyConfigured
   const initialOpenRouterModel = openRouterSettings.defaultModel ?? ''
   const initialOpenRouterApiKeyConfigured = openRouterSettings.isApiKeyConfigured
+  const initialPandaScoreTokenConfigured = sportsSourceSettings.isPandaScoreTokenConfigured
+  const initialSportmonksApiTokenConfigured = sportsSourceSettings.isSportmonksApiTokenConfigured
+  const initialTheSportsDbApiKeyConfigured = sportsSourceSettings.isTheSportsDbApiKeyConfigured
   const initialHomeFeaturedEnabled = resolvedInitialHomeFeaturedSettings.enabled
   const initialHomeFeaturedUseAi = resolvedInitialHomeFeaturedSettings.useAi
   const initialHomeFeaturedMaxCards = resolvedInitialHomeFeaturedSettings.maxCards
@@ -174,6 +185,9 @@ function AdminGeneralSettingsFormInner({
   const [lifiIntegrator, setLifiIntegrator] = useState(initialLiFiIntegrator)
   const [lifiApiKey, setLifiApiKey] = useState(initialLiFiApiKey)
   const [openRouterApiKey, setOpenRouterApiKey] = useState('')
+  const [pandaScoreToken, setPandaScoreToken] = useState('')
+  const [sportmonksApiToken, setSportmonksApiToken] = useState('')
+  const [theSportsDbApiKey, setTheSportsDbApiKey] = useState('')
   const [openRouterModel, setOpenRouterModel] = useState(initialOpenRouterModel)
   const [openRouterSelectValue, setOpenRouterSelectValue] = useState(
     initialOpenRouterModel || AUTOMATIC_MODEL_VALUE,
@@ -588,6 +602,15 @@ function AdminGeneralSettingsFormInner({
           trimmedOpenRouterApiKey={trimmedOpenRouterApiKey}
           onRefreshOpenRouterModels={handleRefreshOpenRouterModels}
           initialOpenRouterApiKeyConfigured={initialOpenRouterApiKeyConfigured}
+          pandaScoreToken={pandaScoreToken}
+          onPandaScoreTokenChange={setPandaScoreToken}
+          initialPandaScoreTokenConfigured={initialPandaScoreTokenConfigured}
+          sportmonksApiToken={sportmonksApiToken}
+          onSportmonksApiTokenChange={setSportmonksApiToken}
+          initialSportmonksApiTokenConfigured={initialSportmonksApiTokenConfigured}
+          theSportsDbApiKey={theSportsDbApiKey}
+          onTheSportsDbApiKeyChange={setTheSportsDbApiKey}
+          initialTheSportsDbApiKeyConfigured={initialTheSportsDbApiKeyConfigured}
           lifiIntegrator={lifiIntegrator}
           onLifiIntegratorChange={setLifiIntegrator}
           lifiApiKey={lifiApiKey}
