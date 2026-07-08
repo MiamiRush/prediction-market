@@ -18,7 +18,6 @@ import type {
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
-  ExternalLinkIcon,
   FlameIcon,
 } from 'lucide-react'
 import { DynamicIcon } from 'lucide-react/dynamic'
@@ -28,6 +27,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import EventBookmark from '@/app/[locale]/(platform)/event/[slug]/_components/EventBookmark'
 import EventChart from '@/app/[locale]/(platform)/event/[slug]/_components/EventChart'
 import EventMarketChannelProvider from '@/app/[locale]/(platform)/event/[slug]/_components/EventMarketChannelProvider'
+import EventShare from '@/app/[locale]/(platform)/event/[slug]/_components/EventShare.tsx'
 import { shouldUseLiveSeriesChart } from '@/app/[locale]/(platform)/event/[slug]/_utils/eventLiveSeriesChartEligibility'
 import {
   buildLinePickerOptions,
@@ -41,7 +41,7 @@ import { Button } from '@/components/ui/button'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useSiteIdentity } from '@/hooks/useSiteIdentity'
 import { ensureReadableTextColorOnDark } from '@/lib/color-contrast'
-import { resolveEventPagePath } from '@/lib/events-routing'
+import { resolveEventOutcomePath, resolveEventPagePath } from '@/lib/events-routing'
 import { formatDollarValueLabel, formatVolume } from '@/lib/formatters'
 import { resolveSportsTeamFallbackClassName } from '@/lib/sports-team-colors'
 import { cn } from '@/lib/utils'
@@ -331,19 +331,10 @@ function FeaturedHeaderActions({
   event: HomeFeaturedEventCard['event']
   className?: string
 }) {
-  const t = useExtracted()
-  const eventHref = resolveEventPagePath(event)
-
   return (
     <div className={cn('flex shrink-0 items-center gap-2', className)}>
-      <Button type="button" variant="ghost" size="icon" asChild aria-label={t('Open market')}>
-        <AppLink intentPrefetch href={eventHref}>
-          <ExternalLinkIcon className="size-4" />
-        </AppLink>
-      </Button>
-      <div className="flex size-10 items-center justify-center">
-        <EventBookmark event={event} refreshStatusOnMount={false} />
-      </div>
+      <EventShare event={event} />
+      <EventBookmark event={event} refreshStatusOnMount={false} />
     </div>
   )
 }
@@ -398,7 +389,27 @@ function FeaturedHeader({
   )
 }
 
-function OutcomeRows({ outcomes, linkedHref }: { outcomes: HomeFeaturedOutcomeSummary[], linkedHref: string }) {
+function resolveFeaturedOutcomeHref(
+  event: HomeFeaturedEventCard['event'],
+  outcome: HomeFeaturedOutcomeSummary,
+  fallbackHref: string,
+) {
+  return resolveEventOutcomePath(event, {
+    marketSlug: outcome.marketSlug,
+    conditionId: outcome.conditionId,
+    outcomeIndex: outcome.outcomeIndex,
+  }) || fallbackHref
+}
+
+function OutcomeRows({
+  item,
+  linkedHref,
+}: {
+  item: HomeFeaturedEventCard
+  linkedHref: string
+}) {
+  const outcomes = item.topOutcomes
+
   if (outcomes.length === 0) {
     return null
   }
@@ -409,7 +420,7 @@ function OutcomeRows({ outcomes, linkedHref }: { outcomes: HomeFeaturedOutcomeSu
         <AppLink
           key={outcome.key}
           intentPrefetch
-          href={linkedHref}
+          href={resolveFeaturedOutcomeHref(item.event, outcome, linkedHref)}
           className={`
             group/outcome grid min-h-14 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border/50 py-2
             last:border-b-0
@@ -467,7 +478,7 @@ function StandardActions({ item, linkedHref }: { item: HomeFeaturedEventCard, li
               `,
             )}
           >
-            <AppLink intentPrefetch href={linkedHref}>
+            <AppLink intentPrefetch href={resolveFeaturedOutcomeHref(item.event, outcome, linkedHref)}>
               <span className="truncate">{outcome.label}</span>
             </AppLink>
           </Button>
@@ -480,15 +491,17 @@ function StandardActions({ item, linkedHref }: { item: HomeFeaturedEventCard, li
 function SportsMarketButton({
   groupLabel,
   market,
-  linkedHref,
+  href,
   className,
   forceNeutral = false,
+  underlineOnHover = false,
 }: {
   groupLabel: string
   market: FeaturedSportsButtonMarket
-  linkedHref: string
+  href: string
   className?: string
   forceNeutral?: boolean
+  underlineOnHover?: boolean
 }) {
   const appearance = forceNeutral ? resolveFilledNeutralSportsButtonAppearance() : resolveSportsButtonAppearance(market)
 
@@ -496,11 +509,11 @@ function SportsMarketButton({
     <AppLink
       key={`${groupLabel}:${market.key}`}
       intentPrefetch
-      href={linkedHref}
+      href={href}
       className={cn(
         `
-          relative inline-flex min-w-0 items-center justify-center overflow-hidden rounded-lg px-3 text-center
-          font-semibold transition duration-150
+          group/sports-market-button relative inline-flex min-w-0 items-center justify-center overflow-hidden rounded-lg
+          px-3 text-center font-semibold transition duration-150
           active:scale-[98%]
         `,
         appearance.className,
@@ -508,7 +521,14 @@ function SportsMarketButton({
       )}
       style={appearance.style}
     >
-      <span className="relative z-1 truncate">{market.label}</span>
+      <span
+        className={cn(
+          'relative z-1 truncate',
+          underlineOnHover && 'decoration-2 group-hover/sports-market-button:underline',
+        )}
+      >
+        {market.label}
+      </span>
       {(appearance.backgroundClassName || appearance.backgroundStyle)
         ? (
             <span
@@ -527,6 +547,22 @@ function SportsMarketButton({
         : null}
     </AppLink>
   )
+}
+
+function resolveFeaturedSportsButtonHref(
+  card: SportsGamesCard,
+  button: SportsGamesButton,
+  fallbackHref: string,
+) {
+  const market = card.detailMarkets.find(market => market.condition_id === button.conditionId)
+    ?? card.event.markets.find(market => market.condition_id === button.conditionId)
+  const href = resolveEventOutcomePath(card.event, {
+    marketSlug: market?.slug,
+    conditionId: button.conditionId,
+    outcomeIndex: button.outcomeIndex,
+  })
+
+  return href || fallbackHref
 }
 
 function SportsMoneylineButtons({
@@ -557,8 +593,9 @@ function SportsMoneylineButtons({
             button,
             resolveMoneylineButtonLabel(card, button),
           )}
-          linkedHref={linkedHref}
+          href={resolveFeaturedSportsButtonHref(card, button, linkedHref)}
           className="h-14 text-sm md:text-base"
+          underlineOnHover
         />
       ))}
     </div>
@@ -907,7 +944,7 @@ function SportsFeaturedLineMarketCarousel({
               button,
               resolveLineButtonLabel(card, activeOption, button, activeMarket, marketType),
             )}
-            linkedHref={linkedHref}
+            href={resolveFeaturedSportsButtonHref(card, button, linkedHref)}
             className="h-10 text-sm"
             forceNeutral
           />
@@ -1513,7 +1550,7 @@ function FeaturedSlide({
 
             {item.kind === 'standard'
               ? <StandardActions item={item} linkedHref={linkedHref} />
-              : <OutcomeRows outcomes={item.topOutcomes} linkedHref={linkedHref} />}
+              : <OutcomeRows item={item} linkedHref={linkedHref} />}
 
             <ContextTicker item={item} currentTimestamp={currentTimestamp} linkedHref={linkedHref} />
           </div>
@@ -1541,7 +1578,7 @@ function FeaturedSlide({
         <div className={featuredDetailsClassName}>
           {item.kind === 'standard'
             ? <StandardActions item={item} linkedHref={linkedHref} />
-            : <OutcomeRows outcomes={item.topOutcomes} linkedHref={linkedHref} />}
+            : <OutcomeRows item={item} linkedHref={linkedHref} />}
 
           <ContextTicker item={item} currentTimestamp={currentTimestamp} linkedHref={linkedHref} />
         </div>
