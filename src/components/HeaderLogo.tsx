@@ -25,7 +25,7 @@ export default function HeaderLogo({ labelSuffix }: HeaderLogoProps) {
         viewBox="0 0 1000 1000"
         xmlns="http://www.w3.org/2000/svg"
         aria-hidden="true"
-        style={{ width: '2.15rem', height: '2.15rem', flexShrink: 0 }}
+        style={{ width: '2.8rem', height: '2.8rem', flexShrink: 0 }}
       >
         <path
           fill="none"
