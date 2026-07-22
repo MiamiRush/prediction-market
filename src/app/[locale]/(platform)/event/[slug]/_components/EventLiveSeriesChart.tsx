@@ -195,8 +195,6 @@ function EventLiveSeriesChartContent({
   const {
     referenceSnapshot,
     referenceSnapshotStatus,
-    baselinePrice,
-    setBaselinePrice,
     persistedFallbackPrice: snapshotFallbackPrice,
   } = useLiveSeriesPriceSnapshot({
     config,
@@ -227,7 +225,6 @@ function EventLiveSeriesChartContent({
     eventEndTimestamp: explicitEndTimestamp,
     subscriptionSymbol,
     isLiveView: isLiveView && !isEventClosed,
-    setBaselinePrice,
   })
 
   const isMarketClosed = useMemo(() => {
@@ -463,9 +460,7 @@ function EventLiveSeriesChartContent({
     requiresCanonicalClose: requiresCanonicalBinanceClose,
   })
   const axisSourceData = renderData
-  const resolvedBaselinePrice = isEventClosed
-    ? referenceOpeningPrice
-    : baselinePrice ?? referenceOpeningPrice
+  const resolvedBaselinePrice = referenceOpeningPrice
   const precisionReferencePrice = currentPrice
     ?? resolvedBaselinePrice
     ?? referenceSnapshot?.latest_price
@@ -758,6 +753,7 @@ function EventLiveSeriesChartContent({
       {showSeriesControls && (
         <EventSeriesPills
           currentEventSlug={event.slug}
+          isDailySeries={tradingWindowMs === 24 * 60 * 60 * 1000}
           seriesEvents={seriesEvents}
           variant="live"
           rightSlot={(
